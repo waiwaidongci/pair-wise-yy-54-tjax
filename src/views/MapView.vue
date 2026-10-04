@@ -6,7 +6,7 @@ import { useSchemeStore } from '../store/scheme'
 const store = useSchemeStore()
 const mapEl = ref<HTMLDivElement>()
 let map: MapLibreMap | undefined
-const layers = ref({ closure: true, detour: true, ambulance: true, bus: true, adjacent: true })
+const layers = ref({ closure: true, detour: true, ambulance: true, bus: true, adjacent: true, sections: true })
 
 function addGeoSource(id: string, coordinates: [number, number][], color: string, dasharray?: number[]) {
   if (!map?.isStyleLoaded()) return
@@ -15,14 +15,37 @@ function addGeoSource(id: string, coordinates: [number, number][], color: string
   map.addLayer({ id, type: 'line', source: id, paint: { 'line-color': color, 'line-width': 5, 'line-opacity': .85, ...(dasharray ? { 'line-dasharray': dasharray } : {}) } })
 }
 
+function drawSections() {
+  if (!map?.isStyleLoaded()) return
+  const features = store.scheme.sections.map((section) => {
+    const mid: [number, number] = [(section.points[0][0] + section.points[1][0]) / 2, (section.points[0][1] + section.points[1][1]) / 2]
+    return { type: 'Feature', properties: { label: section.id }, geometry: { type: 'Point', coordinates: mid } }
+  })
+  if (map.getLayer('section-labels')) { map.removeLayer('section-labels'); map.removeSource('section-labels') }
+  map.addSource('section-labels', { type: 'geojson', data: { type: 'FeatureCollection', features } })
+  map.addLayer({ id: 'section-labels', type: 'symbol', source: 'section-labels', layout: { 'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 0.6] }, paint: { 'text-color': '#475569', 'text-halo-color': '#fff', 'text-halo-width': 2 } })
+}
+
+function drawRecalc() {
+  if (!map?.isStyleLoaded()) return
+  const recalcStages = store.scheme.stages.filter((stage) => stage.recalc)
+  const coordinates = recalcStages.flatMap((stage) => stage.route)
+  if (map.getLayer('recalc')) { map.removeLayer('recalc'); map.removeSource('recalc') }
+  if (coordinates.length === 0) return
+  map.addSource('recalc', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } } })
+  map.addLayer({ id: 'recalc', type: 'line', source: 'recalc', paint: { 'line-color': '#f59e0b', 'line-width': 9, 'line-opacity': .35, 'line-dasharray': [2, 2] } })
+}
+
 function drawAll() {
   if (!map?.isStyleLoaded()) return
   const stage = store.selectedStage
-  if (stage) addGeoSource('closure', stage.route, '#ef4444')
+  if (stage) addGeoSource('closure', stage.route, stage.recalc ? '#f59e0b' : '#ef4444')
   store.scheme.detours.forEach((route, index) => addGeoSource(`detour-${index}`, route.coordinates, '#2563eb', [2, 2]))
   addGeoSource('ambulance', [[121.476,31.216],[121.478,31.228],[121.496,31.235]], '#16a34a')
   addGeoSource('bus', [[121.466,31.220],[121.480,31.229],[121.502,31.238]], '#d97706', [1, 1])
   addGeoSource('adjacent', [[121.502,31.244],[121.514,31.236],[121.524,31.228]], '#7c3aed')
+  drawSections()
+  drawRecalc()
 }
 function toggleLayer(id: string, visible: boolean) { if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none') }
 function fit() { const bounds = new maplibregl.LngLatBounds(); store.scheme.stages.flatMap((stage) => stage.route).forEach((point) => bounds.extend(point)); map?.fitBounds(bounds, { padding: 60 }) }
@@ -40,6 +63,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => map?.remove())
 watch(() => store.selectedStageId, () => { if (!map) return; const stage = getStageFromMap(); if (stage) { map.flyTo({ center: stage.route[0], zoom: 14 }); drawAll() } })
+watch(() => store.scheme.stages.map((stage) => stage.recalc), () => drawAll())
 watch(layers, () => {
   if (!map) return
   toggleLayer('closure', layers.value.closure)
@@ -47,12 +71,13 @@ watch(layers, () => {
   toggleLayer('ambulance', layers.value.ambulance)
   toggleLayer('bus', layers.value.bus)
   toggleLayer('adjacent', layers.value.adjacent)
+  toggleLayer('section-labels', layers.value.sections)
 }, { deep: true })
 </script>
 
 <template>
   <section class="page-head compact"><div><p class="eyebrow">几何与时间联动</p><h1>封路范围与阶段地图</h1><p>选择阶段后在地图上点击绘制路线；每次几何修改都会生成版本，审批意见锚定对应路段。</p></div><a-space><a-button @click="store.startDraw" :status="store.drawing ? 'danger' : undefined">{{ store.drawing ? `绘制中 · 已点 ${store.draftRoute.length} 个` : '绘制封路路线' }}</a-button><a-button :disabled="!store.drawing" type="primary" @click="store.finishDraw">完成绘制</a-button><a-button @click="fit">定位全段</a-button></a-space></section>
-  <div class="toolbar card"><a-radio-group v-model="store.selectedStageId" type="button"><a-radio v-for="stage in store.scheme.stages" :key="stage.id" :value="stage.id">{{ stage.id }}</a-radio></a-radio-group><span class="spacer"></span><a-checkbox v-model="layers.closure">封路</a-checkbox><a-checkbox v-model="layers.detour">绕行</a-checkbox><a-checkbox v-model="layers.ambulance">救护通道</a-checkbox><a-checkbox v-model="layers.bus">公交</a-checkbox><a-checkbox v-model="layers.adjacent">相邻工程</a-checkbox></div>
+  <div class="toolbar card"><a-radio-group v-model="store.selectedStageId" type="button"><a-radio v-for="stage in store.scheme.stages" :key="stage.id" :value="stage.id">{{ stage.id }}</a-radio></a-radio-group><span class="spacer"></span><a-checkbox v-model="layers.closure">封路</a-checkbox><a-checkbox v-model="layers.detour">绕行</a-checkbox><a-checkbox v-model="layers.ambulance">救护通道</a-checkbox><a-checkbox v-model="layers.bus">公交</a-checkbox><a-checkbox v-model="layers.adjacent">相邻工程</a-checkbox><a-checkbox v-model="layers.sections">路段编号</a-checkbox></div>
   <div class="map-grid">
     <div ref="mapEl" class="map"></div>
     <aside class="card inspector">

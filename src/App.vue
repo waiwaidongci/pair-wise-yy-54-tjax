@@ -8,6 +8,7 @@ const store = useSchemeStore()
 const nav = [
   { name: 'overview', label: '方案总览' },
   { name: 'map', label: '地图与阶段' },
+  { name: 'handover', label: '交接账' },
   { name: 'review', label: '多单位会签' },
 ]
 </script>
