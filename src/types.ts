@@ -26,6 +26,8 @@ export interface SegmentComment {
   content: string
   condition?: string
   status: '待处理' | '已接受' | '已退回'
+  /** 旧方案原始会签时间，迁移到执行交接账时原样保留。 */
+  createdAt?: string
 }
 
 export interface Scheme {
